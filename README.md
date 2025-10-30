@@ -57,9 +57,4 @@ All major dependencies are listed in `requirements.txt` (create using pip freeze
 
 ## Reproducibility
 - Output file names and seed settings should be preserved for all production jobs to ensure results traceability.
-- Use separate parameter/config yaml/json to keep runs reproducible (optional, implement as needed).
-
-## Project Led By
-- Principal: [Your Name]
-- AI Assistant: ChatGPT + code audit tools
-- For publication targets, cite relevant agent-based modeling/complex systems literature as needed.
+- Use separate parameter/config yaml/json to keep runs reproducible (optional, implement as needed).x
