@@ -1,6 +1,6 @@
 import os, json, time, hashlib
-import numpy as np
-import pandas as pd
+import numpy as np  # pyright: ignore[reportMissingImports]
+import pandas as pd  # pyright: ignore[reportMissingImports]
 from itertools import product
 
 import vendor_generator as vg
@@ -29,16 +29,18 @@ def _init_paths():
 # ------------- Top-level controls for a SIMPLE TEST RUN ------------------
 REPEATS = 1
 AFFINITY_DECAY = 1.0
-SAVE_TIMESERIES = False
+SAVE_TIMESERIES = True
 PARALLEL = False  # Easier to debug sequentially first
 N_JOBS = 1        # Define N_JOBS even for sequential run
+RUN_CLASSIC = False  # Toggle to disable the agent-based runs when focusing on mean-field
+RUN_MEAN_FIELD = True
 
 # ------- A minimal Sweep definition for testing ----------
 SWEEP = {
     # Global choice knobs
-    "T": [0.5, 1.5],         # Temperature
-    "K": [5, 20],            # Information visibility (number of vendors)
-    "J": [0.5, 1.0],         # Social coupling for mean-field model
+    "T": [float(np.round(x, 4)) for x in np.linspace(0.3, 1.2, 25)],  # Temperature sweep
+    "K": [3, 5, 7, 9, 12],            # Information visibility (number of vendors)
+    "J": [float(np.round(x, 4)) for x in np.linspace(-0.4, 0.6, 30)],  # Social coupling (bandwagon ⇄ anti-conformity)
     
     # Other params (kept simple)
     "phi": [0.2],            # Bandwagon coupling for classic model
@@ -46,12 +48,12 @@ SWEEP = {
     "beta_digital": [1.0],
 
     # Market size/structure
-    "num_customers": [50],
-    "num_vendors": [10],
-    "local_fraction": [0.5],
+    "num_customers": [200],
+    "num_vendors": [40],
+    "local_fraction": [0.7],
 
     # Dynamics
-    "rounds": [10],
+    "rounds": [25],
 
     # Vendor generation
     "rho": [1.3],
@@ -276,17 +278,36 @@ def run_meanfield_sim_wrapper(customers, vendors, params, seed):
         T=params["T"],
         J=params["J"],
         mask_mode="K",
-        mask_value=params["K"]
+        mask_value=params["K"],
+        return_history=SAVE_TIMESERIES,
     )
 
-    # Extract and return summary metrics
+    shares = np.asarray(result["shares"], dtype=float)
+    if shares.sum() > 0:
+        shares = shares / shares.sum()
+    eps = 1e-12
+    entropy = -np.sum(shares * np.log(shares + eps))
+    hhi = np.sum(shares ** 2)
+    top_share = shares.max() if len(shares) else np.nan
+
+    # Extract and return summary metrics (mean-field has no temporal dynamics, so
+    # we mirror 'late_*' fields to the fixed-point outcome for downstream code parity.)
     summary = {
-        'final_local_share': 1 - (result['m'] + 1) / 2, # Approximate from magnetization
-        'final_top_share': np.max(result['shares']),
-        'converged': result['converged'],
-        'iters': result['iters']
+        "final_local_share": 1 - (result["m"] + 1) / 2,  # Approximate from magnetization
+        "final_top_share": top_share,
+        "final_hhi": hhi,
+        "final_entropy": entropy,
+        "late_local_share": 1 - (result["m"] + 1) / 2,
+        "late_top_share": top_share,
+        "late_hhi": hhi,
+        "late_entropy": entropy,
+        "converged": result["converged"],
+        "iters": result["iters"],
     }
-    return summary, None
+    history_df = None
+    if SAVE_TIMESERIES and "history" in result:
+        history_df = pd.DataFrame(result["history"])
+    return summary, history_df
 
 
 def _worker_run(job):
@@ -294,7 +315,6 @@ def _worker_run(job):
     job dict contains: scen_hash, cust_path, vend_path, params, repeat, seeds, flags.
     Loads population, runs one sim, returns a summary row (and optionally writes timeseries).
     """
-    import pandas as pd
     set_global_seed(job["seed_for_run"])
     customers = pd.read_csv(job["cust_path"])
     vendors   = pd.read_csv(job["vend_path"])
@@ -307,16 +327,46 @@ def _worker_run(job):
 
     # Model parameter passing
     params = job["params"]
-    classic_summary, _ = run_classic_sim_wrapper(customers, vendors, params, job["seed_for_run"])
-    classic_row = dict(job["params"])
-    classic_row.update({"model_type": "classic", **classic_summary})
+    rows = []
+
+    if job.get("run_classic", True):
+        classic_summary, classic_ts = run_classic_sim_wrapper(customers, vendors, params, job["seed_for_run"])
+        classic_row = dict(job["params"])
+        classic_row.update({"model_type": "classic", "repeat": job["repeat"], **classic_summary})
+        rows.append(classic_row)
+        if job.get("save_ts") and classic_ts is not None:
+            ts_df = classic_ts.copy()
+            ts_df["model_type"] = "classic"
+            for key, val in job["params"].items():
+                ts_df[key] = val
+            ts_df["repeat"] = job["repeat"]
+            ts_df["scenario_hash"] = job["scen_hash"]
+            ts_df["seed_for_run"] = job["seed_for_run"]
+            params_hash = hashlib.md5(json.dumps(job["params"], sort_keys=True).encode()).hexdigest()[:8]
+            ts_fname = f"classic_{job['scen_hash']}_{params_hash}_rep{job['repeat']}.csv"
+            ts_path = os.path.join(job["ts_outdir"], ts_fname)
+            ts_df.to_csv(ts_path, index=False)
 
     # Run Mean-Field Model
-    meanfield_summary, _ = run_meanfield_sim_wrapper(customers, vendors, params, job["seed_for_run"])
-    meanfield_row = dict(job["params"])
-    meanfield_row.update({"model_type": "mean_field", "repeat": job["repeat"], **meanfield_summary})
+    if job.get("run_mean_field", True):
+        meanfield_summary, meanfield_ts = run_meanfield_sim_wrapper(customers, vendors, params, job["seed_for_run"])
+        meanfield_row = dict(job["params"])
+        meanfield_row.update({"model_type": "mean_field", "repeat": job["repeat"], **meanfield_summary})
+        rows.append(meanfield_row)
+        if job.get("save_ts") and meanfield_ts is not None:
+            ts_df = meanfield_ts.copy()
+            ts_df["model_type"] = "mean_field"
+            for key, val in job["params"].items():
+                ts_df[key] = val
+            ts_df["repeat"] = job["repeat"]
+            ts_df["scenario_hash"] = job["scen_hash"]
+            ts_df["seed_for_run"] = job["seed_for_run"]
+            params_hash = hashlib.md5(json.dumps(job["params"], sort_keys=True).encode()).hexdigest()[:8]
+            ts_fname = f"mean_field_{job['scen_hash']}_{params_hash}_rep{job['repeat']}.csv"
+            ts_path = os.path.join(job["ts_outdir"], ts_fname)
+            ts_df.to_csv(ts_path, index=False)
 
-    return [classic_row, meanfield_row]
+    return rows
 
 
 def main():
@@ -364,6 +414,8 @@ def main():
                 "seed_for_run": seed_for_run,
                 "save_ts": SAVE_TIMESERIES,
                 "ts_outdir": ts_outdir,
+                "run_classic": RUN_CLASSIC,
+                "run_mean_field": RUN_MEAN_FIELD,
             })
 
     # Execute (parallel or sequential)
@@ -383,7 +435,7 @@ def main():
     summary_df.to_csv(summary_path, index=False)
 
     # ---------------- Post-processing: susceptibility wrt T ----------------
-    group_keys = [k for k in SWEEP.keys() if k != "T"] + ["repeat"]
+    group_keys = [k for k in SWEEP.keys() if k != "T"] + ["repeat", "model_type"]
     summary_df = summary_df.sort_values(group_keys + ["T"]).reset_index(drop=True)
 
     sus_records = []

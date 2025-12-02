@@ -20,22 +20,27 @@ Notes:
 
 import os
 import glob
+from pathlib import Path
 from typing import Dict, Any, List, Tuple
 
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
+import numpy as np  # pyright: ignore[reportMissingImports]
+import pandas as pd  # pyright: ignore[reportMissingImports]
+import matplotlib.pyplot as plt  # pyright: ignore[reportMissingImports]
 
 # ==============================
 # CONFIG — EDIT AS YOU LIKE
 # ==============================
 
 # Which run directories to scan (globs). Each run dir should contain results_summary.csv
-RUN_GLOBS = ["out/run_*"]
+_HERE = Path(__file__).resolve().parent
+RUN_GLOBS = [
+    str(_HERE / "out" / "run_*"),
+    str(_HERE.parent / "out" / "run_*"),
+]
 
 # Axes and aggregation
 XAXIS = "T"
-YAXIS = "gamma" # local_fraction
+YAXIS = "J"  # axis must vary across the sweep to avoid degenerate heatmaps
 AGG = "mean"  # "mean" or "median"
 
 # Which metrics from results_summary.csv to render
@@ -68,9 +73,18 @@ OVERWRITE = False
 PLOT_SUSCEPTIBILITY = True
 SUSCEPTIBILITY_METRIC = "susceptibility_dL_dT"
 
+# Define which K slices to facet when plotting mean-field runs
+MEAN_FIELD_K_LEVELS = [3, 5, 7, 9, 12]
+
 # Define slices (filters) you want heatmaps for. Leave empty to make a single "all" slice.
 # Values may be scalars or lists (interpreted as membership).
 SLICES: List[Dict[str, Any]] = [
+    {"name": "classic", "filters": {"model_type": "classic"}},
+    {"name": "mean_field_all", "filters": {"model_type": "mean_field"}},
+    *(
+        {"name": f"mean_field_K{k}", "filters": {"model_type": "mean_field", "K": k}}
+        for k in MEAN_FIELD_K_LEVELS
+    ),
     # {"name": "phi_0.0", "filters": {"phi": 0.0}},
     # {"name": "phi_0.2", "filters": {"phi": 0.2}},
     # {"name": "structure_A", "filters": {"num_customers": 400, "num_vendors": 60, "local_fraction": 0.6}},
@@ -276,7 +290,11 @@ def render_one_sus_heatmap(
     """Susceptibility heatmap for the same slice."""
     if SUSCEPTIBILITY_METRIC not in sus_df.columns:
         return ""
-    df_slice = apply_filters(sus_df, slice_cfg.get("filters", {}))
+    filters = slice_cfg.get("filters", {})
+    usable_filters = {k: v for k, v in filters.items() if k in sus_df.columns}
+    if filters and not usable_filters:
+        return ""
+    df_slice = apply_filters(sus_df, usable_filters)
     if df_slice.empty:
         return ""
 
@@ -305,12 +323,17 @@ def render_one_sus_heatmap(
 def find_runs(run_globs: List[str]) -> List[str]:
     """Return list of run directories containing results_summary.csv."""
     found = []
+    seen = set()
     for patt in run_globs:
         for path in glob.glob(patt):
             if not os.path.isdir(path):
                 continue
-            if os.path.exists(os.path.join(path, "results_summary.csv")):
-                found.append(path)
+            abs_path = os.path.abspath(path)
+            if abs_path in seen:
+                continue
+            if os.path.exists(os.path.join(abs_path, "results_summary.csv")):
+                found.append(abs_path)
+                seen.add(abs_path)
     return sorted(found)
 
 

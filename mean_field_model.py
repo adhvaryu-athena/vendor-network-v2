@@ -197,7 +197,8 @@ def solve_fixed_point(
     mean_field: bool = True,
     # NEW: allow reuse of prebuilt masks and custom initial m
     consideration_sets: Optional[List[np.ndarray]] = None,
-    m_init: float = 0.0
+    m_init: float = 0.0,
+    return_history: bool = False
 ) -> Dict[str, object]:
     """
     Compute equilibrium m and vendor shares.
@@ -224,6 +225,7 @@ def solve_fixed_point(
     m = float(np.clip(m_init, -1.0, 1.0))
 
     shares = np.zeros(M, dtype=float)
+    history: List[Dict[str, float]] = [] if return_history else []
     it = 0
 
     for it in range(max_iters):
@@ -250,8 +252,21 @@ def solve_fixed_point(
 
         m_new = signed_sum / N
         m = (1.0 - damping) * m + damping * m_new
+        delta_m = abs(m - m_prev)
 
-        if abs(m - m_prev) <= eps:
+        if return_history:
+            shares_norm = shares / N if N > 0 else shares.copy()
+            local_share = shares_norm[s == -1].sum() if shares_norm.size else float("nan")
+            history.append({
+                "iteration": it + 1,
+                "m": float(m),
+                "delta_m": float(delta_m),
+                "top_share": float(shares_norm.max() if shares_norm.size else float("nan")),
+                "local_share": float(local_share),
+                "converged": bool(delta_m <= eps),
+            })
+
+        if delta_m <= eps:
             break
 
     if not mean_field:
@@ -259,12 +274,15 @@ def solve_fixed_point(
     else:
         shares = shares / N
 
-    return {
+    result = {
         "m": float(m),
         "iters": it + 1,
         "converged": abs(m - m_prev) <= eps,
         "shares": shares
     }
+    if return_history:
+        result["history"] = history
+    return result
 
 
 # -----------------------------

@@ -149,9 +149,34 @@ def compute_vendor_market_share(choices, num_vendors):
     return np.bincount(choices, minlength=num_vendors)
 
 # Compute fraction of customers choosing local vendors
-def compute_local_share(choices):
-    vendors = pd.read_csv("data/vendors.csv")
-    local_ids = vendors[vendors['type'] == 'local'].index.to_list()
+def compute_local_share(choices, vendors=None, vendor_is_local=None):
+    """
+    Compute fraction of customers choosing local vendors.
+
+    Parameters
+    ----------
+    choices : array-like
+        Indices of vendors chosen by each customer (length N)
+    vendors : pandas.DataFrame, optional
+        Vendor frame with a 'type' column (values include 'local'/'digital').
+        Used to infer local vendors if vendor_is_local is not provided.
+    vendor_is_local : array-like, optional
+        Boolean/int array of shape (M,) with 1/True where vendor is local.
+
+    Returns
+    -------
+    float
+        Fraction of customers choosing local vendors. Returns 0.0 if choices empty.
+    """
+    if vendor_is_local is None:
+        if vendors is None:
+            raise ValueError("compute_local_share: provide either 'vendors' DataFrame or 'vendor_is_local' array")
+        vendor_is_local = (vendors['type'].astype(str) == 'local').astype(int).to_numpy()
+
+    vendor_is_local = np.asarray(vendor_is_local, dtype=int)
+    local_ids = np.where(vendor_is_local == 1)[0]
+    if len(choices) == 0:
+        return 0.0
     local_choice_count = sum(1 for c in choices if c in local_ids)
     return local_choice_count / len(choices)
 
