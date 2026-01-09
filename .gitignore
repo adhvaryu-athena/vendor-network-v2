@@ -51,3 +51,5 @@ htmlcov/
 # macOS artifacts
 .DS_Store
 
+# Build outputs
+out/

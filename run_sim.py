@@ -32,15 +32,15 @@ AFFINITY_DECAY = 1.0
 SAVE_TIMESERIES = True
 PARALLEL = False  # Easier to debug sequentially first
 N_JOBS = 1        # Define N_JOBS even for sequential run
-RUN_CLASSIC = False  # Toggle to disable the agent-based runs when focusing on mean-field
-RUN_MEAN_FIELD = True
+RUN_CLASSIC = True  # Toggle to disable the agent-based runs when focusing on mean-field
+RUN_MEAN_FIELD = False
 
 # ------- A minimal Sweep definition for testing ----------
 SWEEP = {
     # Global choice knobs
-    "T": [float(np.round(x, 4)) for x in np.linspace(0.3, 1.2, 25)],  # Temperature sweep
-    "K": [3, 5, 7, 9, 12],            # Information visibility (number of vendors)
-    "J": [float(np.round(x, 4)) for x in np.linspace(-0.4, 0.6, 30)],  # Social coupling (bandwagon ⇄ anti-conformity)
+    "T": [float(np.round(x, 4)) for x in np.linspace(0.2, 0.9, 35)],  # Temperature sweep
+    "K": [7],            # Information visibility (number of vendors)
+    "J": [float(np.round(x, 4)) for x in np.linspace(-0.6, 1.0, 35)],  # Social coupling (bandwagon ⇄ anti-conformity)
     
     # Other params (kept simple)
     "phi": [0.2],            # Bandwagon coupling for classic model
@@ -53,11 +53,11 @@ SWEEP = {
     "local_fraction": [0.7],
 
     # Dynamics
-    "rounds": [25],
+    "rounds": [12],
 
     # Vendor generation
-    "rho": [1.3],
-    "sigma": [0.30],
+    "rho": [1.1],
+    "sigma": [0.15],
 }
 
 # Optional: pin the numpy seed for reproducibility at the *run* level
